@@ -37,7 +37,7 @@ func main() {
   if err != nil {
     log.Fatalln(err)
   }
-  q = q.Project("id").Limit(5)
+  q = q.Project("id", "timeline").Filter("id =", tw.Id).Limit(5)
   iter := q.Run(session)
   for err := iter.Next(&tweet); err != datastore.Done; err = iter.Next(&tweet) {
     fmt.Printf("Read a tweet --> %v \n", tweet)
