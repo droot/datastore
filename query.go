@@ -4,6 +4,7 @@ import (
   "errors"
   "fmt"
   "math"
+  "reflect"
   "strings"
 
   "github.com/gocql/gocql"
@@ -39,26 +40,25 @@ type order struct {
   Direction sortDirection
 }
 
-// NewQuery creates a new Query for a specific entity kind.
-func NewQuery(kind string, entity interface{}) (*Query, error) {
-  cls, err := newStructCLS(entity) // column load saver type
+// NewQuery creates a new Query given an entity type.
+func NewQuery(typ reflect.Type) (*Query, error) {
+  codec, err := getStructCodec(typ)
   if err != nil {
     return nil, err
   }
   return &Query{
-    kind:  kind,
     limit: -1,
-    cls:   cls,
+    codec: codec,
   }, nil
 }
 
 // Query represents a CQL query.
 type Query struct {
-  kind       string
   filter     []filter
   order      []order
   projection []string
-  cls        *structCLS
+  codec      *structCodec
+  // cls        *structCLS
 
   limit int32
 
@@ -169,17 +169,16 @@ var filterOpMapping = map[operator]string{
 
 // toCQL returns CQL query statement corresponding to the query q.
 func (q *Query) toCQL() (string, []interface{}, error) {
-
-  cls := q.cls
+  codec := q.codec
 
   var columnStr string
   if len(q.projection) > 0 {
     columnStr = strings.Join(q.projection, ",")
   } else {
-    columnStr = cls.getColumnStr()
+    columnStr = codec.getColumnStr()
   }
 
-  cql := fmt.Sprintf("SELECT %s FROM %s", columnStr, q.kind)
+  cql := fmt.Sprintf("SELECT %s FROM %s", columnStr, codec.columnFamily)
 
   var args []interface{}
 
@@ -189,7 +188,7 @@ func (q *Query) toCQL() (string, []interface{}, error) {
     args = make([]interface{}, len(q.filter))
 
     for i, filter := range q.filter {
-      _, ok := cls.codec.byName[filter.FieldName]
+      _, ok := codec.byName[filter.FieldName]
       if !ok {
         return "", args, fmt.Errorf("query : fieldname %s not found", filter.FieldName)
       }

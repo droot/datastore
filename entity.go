@@ -9,6 +9,11 @@ import (
   "github.com/gocql/gocql"
 )
 
+// Entity represent a columnFamily.
+type Entity interface {
+  ColumnFamily() string
+}
+
 // structTag is the parsed `cql:"name,options"` tag of a struct field.
 // if a field has no tag, or the tag has an empty name, then the structTag's
 // name is just the field name. A "-" name means that the datastore ignores
@@ -21,10 +26,14 @@ type structTag struct {
 // structCodec describes how to convert a struct to and from a sequence of
 // column values.
 type structCodec struct {
+  // column family name this struct represent
+  columnFamily string
   // byIndex gives the structTag for the i'th field.
   byIndex []structTag
   // byName gives the field codec for the structTag with the given name.
   byName map[string]fieldCodec
+
+  nrDBCols int
 }
 
 // fieldCodec is a struct field's index
@@ -61,15 +70,16 @@ func getStructCodecLocked(t reflect.Type) (ret *structCodec, err error) {
     }
   }()
 
+  nrDBCols := 0
   // iterate over each struct field
   for i := range c.byIndex {
 
     f := t.Field(i)
     name, opts := f.Tag.Get("cql"), ""
 
-    if i := strings.Index(name, ","); i != -1 {
+    if ii := strings.Index(name, ","); ii != -1 {
       // comma found in the tag
-      name, opts = name[:i], name[i+1:]
+      name, opts = name[:ii], name[ii+1:]
     }
 
     if name == "" {
@@ -80,14 +90,31 @@ func getStructCodecLocked(t reflect.Type) (ret *structCodec, err error) {
     } else if name == "-" {
       c.byIndex[i] = structTag{name: name}
     }
-    // we have a name by now
+
+    if f.Name == "ColumnFamily" {
+      if name == "" || name == "-" {
+        return nil, fmt.Errorf("datastore: name %s not allowed", name)
+      }
+      c.columnFamily = name
+      name = "-" // mark columnFamily for omitting
+    }
     // TODO (sunil): Check if the name is valid or not
     c.byName[name] = fieldCodec{index: i}
     c.byIndex[i] = structTag{
       name: name,
       opts: opts,
     }
+
+    if f.Name != "ColumnFamily" && name != "-" {
+      nrDBCols += 1
+    }
   }
+  if c.columnFamily == "" {
+    // column family is not defined for this entity type
+    return nil,
+      fmt.Errorf("datastore: ColumnFamily field missing in %v", t)
+  }
+  c.nrDBCols = nrDBCols
   return c, nil
 }
 
@@ -120,27 +147,37 @@ func (cls *structCLS) Load(iter *gocql.Iter) error {
   return Done
 }
 
-func (cls *structCLS) getColumnStr() string {
-  cols := make([]string, len(cls.codec.byIndex))
-  for i, v := range cls.codec.byIndex {
+func (codec *structCodec) getColumnStr() string {
+  cols := make([]string, codec.nrDBCols)
+  i := 0
+  for _, v := range codec.byIndex {
+    if v.name == "-" {
+      continue
+    }
     cols[i] = v.name
+    i++
   }
   return strings.Join(cols, ",")
 }
 
-func (cls *structCLS) save(kind string, session *gocql.Session) error {
+func (cls *structCLS) save(session *gocql.Session) error {
 
-  qqs := make([]string, len(cls.codec.byIndex))
-  vals := make([]interface{}, len(cls.codec.byIndex))
+  qqs := make([]string, cls.codec.nrDBCols)
+  vals := make([]interface{}, cls.codec.nrDBCols)
 
-  for i, v := range cls.codec.byIndex {
+  i := 0
+  for _, v := range cls.codec.byIndex {
+    if v.name == "-" {
+      continue
+    }
     qqs[i] = "?"
     vals[i] = cls.v.Field(cls.codec.byName[v.name].index).Interface()
+    i++
   }
   // columnStr := strings.Join(cols, ",")
   qqStr := strings.Join(qqs, ",")
   queryStr := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-    kind, cls.getColumnStr(), qqStr)
+    cls.codec.columnFamily, cls.codec.getColumnStr(), qqStr)
 
   if err := session.Query(queryStr, vals...).Exec(); err != nil {
     return err
@@ -173,10 +210,10 @@ func LoadEntity(dst interface{}, iter *gocql.Iter) error {
 
 // SaveEntity saves a given entity instance in datastore, src must be a struct
 // pointer of column family kind.
-func SaveEntity(session *gocql.Session, kind string, src interface{}) error {
+func SaveEntity(session *gocql.Session, src interface{}) error {
   x, err := newStructCLS(src)
   if err != nil {
     return err
   }
-  return x.save(kind, session)
+  return x.save(session)
 }

@@ -3,6 +3,7 @@ package main
 import (
   "fmt"
   "log"
+  "reflect"
   "time"
 
   "github.com/droot/datastore"
@@ -10,10 +11,13 @@ import (
 )
 
 type Tweet struct {
-  Timeline string     `cql:"timeline,"`
-  Id       gocql.UUID `cql:"id,"`
-  TextVal  string     `cql:"text,"`
+  ColumnFamily string     `cql:"tweet"`
+  Timeline     string     `cql:"timeline,"`
+  Id           gocql.UUID `cql:"id,"`
+  TextVal      string     `cql:"text,"`
 }
+
+var typeOfTweet = reflect.TypeOf(Tweet{})
 
 func main() {
   // connect to the cluster
@@ -28,12 +32,12 @@ func main() {
     Id:       gocql.TimeUUID(),
     TextVal:  fmt.Sprintf("Auto generated at %s", time.Now()),
   }
-  if err := datastore.SaveEntity(session, "tweet", tw); err != nil {
+  if err := datastore.SaveEntity(session, tw); err != nil {
     log.Fatalln("Error inserting new tweet ::", err)
   }
 
   var tweet Tweet
-  q, err := datastore.NewQuery("tweet", &Tweet{})
+  q, err := datastore.NewQuery(typeOfTweet)
   if err != nil {
     log.Fatalln(err)
   }
@@ -43,7 +47,7 @@ func main() {
     fmt.Printf("Read a tweet --> %v \n", tweet)
   }
 
-  q1, err := datastore.NewQuery("tweet", &Tweet{})
+  q1, err := datastore.NewQuery(typeOfTweet)
   if err != nil {
     log.Fatalln(err)
   }
@@ -51,4 +55,20 @@ func main() {
     log.Fatalln(err)
   }
   fmt.Printf("First tweet --> %s \n", tweet)
+
+  // lets do an update
+  qu, err := datastore.NewUpdateQuery(typeOfTweet)
+  if err != nil {
+    log.Fatalln(err)
+  }
+  qu = qu.Filter("id =", tw.Id).Update("text", "updated by me :)")
+  qStr, err := qu.CQL()
+  if err != nil {
+    log.Fatalln(err)
+  }
+  fmt.Println("Query -> ", qStr)
+  err = qu.Run(session)
+  if err != nil {
+    log.Fatalln(err)
+  }
 }
