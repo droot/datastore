@@ -11,6 +11,7 @@ import (
 
 // Entity represent a columnFamily.
 type Entity interface {
+  // ColumnFamily returns name of the column family this entity represent.
   ColumnFamily() string
 }
 
@@ -33,6 +34,8 @@ type structCodec struct {
   // byName gives the field codec for the structTag with the given name.
   byName map[string]fieldCodec
 
+  // nrDBCols gives number of columns being stored in DB. Columns with "-" tag
+  // are ignored.
   nrDBCols int
 }
 
@@ -87,8 +90,6 @@ func getStructCodecLocked(t reflect.Type) (ret *structCodec, err error) {
         // if no name has been assigned, use the struct field name
         name = f.Name
       }
-    } else if name == "-" {
-      c.byIndex[i] = structTag{name: name}
     }
 
     if f.Name == "ColumnFamily" {
@@ -96,7 +97,7 @@ func getStructCodecLocked(t reflect.Type) (ret *structCodec, err error) {
         return nil, fmt.Errorf("datastore: name %s not allowed", name)
       }
       c.columnFamily = name
-      name = "-" // mark columnFamily for omitting
+      name = "-" // ignore this columnFamily for DB storage
     }
     // TODO (sunil): Check if the name is valid or not
     c.byName[name] = fieldCodec{index: i}
@@ -161,10 +162,8 @@ func (codec *structCodec) getColumnStr() string {
 }
 
 func (cls *structCLS) save(session *gocql.Session) error {
-
   qqs := make([]string, cls.codec.nrDBCols)
   vals := make([]interface{}, cls.codec.nrDBCols)
-
   i := 0
   for _, v := range cls.codec.byIndex {
     if v.name == "-" {

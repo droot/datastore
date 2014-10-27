@@ -27,6 +27,29 @@ type filter struct {
   Value     interface{}
 }
 
+// getWhereClause is a helper function to get the Where clause related info to
+// construct CQL query.
+func getWhereClause(codec *structCodec, filters []filter) (
+  cond string, args []interface{}, err error) {
+
+  if len(filters) <= 0 {
+    return cond, args, err
+  }
+  conditions := make([]string, len(filters))
+  for i, filter := range filters {
+    _, ok := codec.byName[filter.FieldName]
+    if !ok {
+      return cond, args,
+        fmt.Errorf("query : fieldname %s not found", filter.FieldName)
+    }
+    conditions[i] = fmt.Sprintf("%s %s ?", filter.FieldName,
+      filterOpMapping[filter.Op])
+    args = append(args, filter.Value)
+  }
+  cond = " WHERE " + strings.Join(conditions, " AND ")
+  return cond, args, err
+}
+
 type sortDirection int
 
 const (
@@ -58,9 +81,7 @@ type Query struct {
   order      []order
   projection []string
   codec      *structCodec
-  // cls        *structCLS
-
-  limit int32
+  limit      int32
 
   err error
 }
@@ -182,23 +203,12 @@ func (q *Query) toCQL() (string, []interface{}, error) {
 
   var args []interface{}
 
-  if len(q.filter) > 0 {
-
-    conditions := make([]string, len(q.filter))
-    args = make([]interface{}, len(q.filter))
-
-    for i, filter := range q.filter {
-      _, ok := codec.byName[filter.FieldName]
-      if !ok {
-        return "", args, fmt.Errorf("query : fieldname %s not found", filter.FieldName)
-      }
-      conditions[i] = fmt.Sprintf("%s %s ?", filter.FieldName,
-        filterOpMapping[filter.Op])
-      args[i] = filter.Value
-    }
-
-    cql = cql + " WHERE " + strings.Join(conditions, " AND ")
+  whereClause, whereArgs, err := getWhereClause(q.codec, q.filter)
+  if err != nil {
+    return "", whereArgs, err
   }
+  cql = cql + whereClause
+  args = append(args, whereArgs...)
 
   if q.limit > 0 {
     cql = cql + fmt.Sprintf(" LIMIT %d", q.limit)
@@ -262,6 +272,7 @@ func (t *Iterator) Next(dst interface{}) error {
   return LoadEntity(dst, iter)
 }
 
+// Close closed the iterator.
 func (t *Iterator) Close() error {
   return t.iter.Close()
 }

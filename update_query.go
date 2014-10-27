@@ -25,7 +25,6 @@ type UpdateQuery struct {
   ttl     int64
   updates map[string]interface{}
   codec   *structCodec
-  // cls     *structCLS
 
   err error
 }
@@ -112,19 +111,12 @@ func (q *UpdateQuery) toCQL() (cql string, args []interface{}, err error) {
     cql = cql + strings.Join(updates, ", ")
   }
 
-  if len(q.filter) > 0 {
-    conditions := make([]string, len(q.filter))
-    for i, filter := range q.filter {
-      _, ok := q.codec.byName[filter.FieldName]
-      if !ok {
-        return "", args, fmt.Errorf("query : fieldname %s not found", filter.FieldName)
-      }
-      conditions[i] = fmt.Sprintf("%s %s ?", filter.FieldName,
-        filterOpMapping[filter.Op])
-      args = append(args, filter.Value)
-    }
-    cql = cql + " WHERE " + strings.Join(conditions, " AND ")
+  whereClause, whereArgs, err := getWhereClause(q.codec, q.filter)
+  if err != nil {
+    return "", whereArgs, err
   }
+  cql = cql + whereClause
+  args = append(args, whereArgs...)
 
   return cql, args, nil
 }
