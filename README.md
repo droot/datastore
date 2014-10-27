@@ -24,18 +24,21 @@ package main
 import (
   "fmt"
   "log"
+  "reflect"
   "time"
 
   "github.com/droot/datastore"
   "github.com/gocql/gocql"
 )
 
-// Tweet defines a struct for operating on tweet columnfamily.
 type Tweet struct {
-  Timeline string     `cql:"timeline,"`
-  Id       gocql.UUID `cql:"id,"`
-  TextVal  string     `cql:"text,"`
+  ColumnFamily string     `cql:"tweet"`
+  Timeline     string     `cql:"timeline,"`
+  Id           gocql.UUID `cql:"id,"`
+  TextVal      string     `cql:"text,"`
 }
+
+var typeOfTweet = reflect.TypeOf(Tweet{})
 
 func main() {
   // connect to the cluster
@@ -50,42 +53,44 @@ func main() {
     Id:       gocql.TimeUUID(),
     TextVal:  fmt.Sprintf("Auto generated at %s", time.Now()),
   }
-
-  // inserting new row in tweet columnfamily.
-  if err := datastore.SaveEntity(session, "tweet", tw); err != nil {
+  if err := datastore.SaveEntity(session, tw); err != nil {
     log.Fatalln("Error inserting new tweet ::", err)
   }
 
-  // Reading multiple rows
   var tweet Tweet
-
-  // create a new query instance. 
-  q, err := datastore.NewQuery("tweet", &Tweet{})
+  q, err := datastore.NewQuery(typeOfTweet)
   if err != nil {
     log.Fatalln(err)
   }
-
-  // project columns you are interested in. Additionally specify filtering/limiting in the query.
   q = q.Project("id", "timeline").Filter("id =", tw.Id).Limit(5)
-
-  // get hold of an iterator and loop over the tweets.
   iter := q.Run(session)
   for err := iter.Next(&tweet); err != datastore.Done; err = iter.Next(&tweet) {
     fmt.Printf("Read a tweet --> %v \n", tweet)
   }
 
-  // Fetching first row for a query.
-
-  // create a new query
-  q1, err := datastore.NewQuery("tweet", &Tweet{})
+  q1, err := datastore.NewQuery(typeOfTweet)
   if err != nil {
     log.Fatalln(err)
   }
-
-  // First captures the first row from the query
   if err := q1.First(session, &tweet); err != nil {
     log.Fatalln(err)
   }
   fmt.Printf("First tweet --> %s \n", tweet)
+
+  // lets do an update
+  qu, err := datastore.NewUpdateQuery(typeOfTweet)
+  if err != nil {
+    log.Fatalln(err)
+  }
+  qu = qu.Filter("id =", tw.Id).Update("text", "updated by me :)")
+  qStr, err := qu.CQL()
+  if err != nil {
+    log.Fatalln(err)
+  }
+  fmt.Println("Query -> ", qStr)
+  err = qu.Run(session)
+  if err != nil {
+    log.Fatalln(err)
+  }
 }
 ```
